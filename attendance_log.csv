@@ -1,0 +1,16 @@
+student_email,lecture_title,status,timestamp
+student1@test.com,Demo Lecture,present,2025-09-23 05:57:30.395302+00:00
+student2@test.com,Demo Lecture,present,2025-09-23 05:57:30.395302+00:00
+student3@test.com,Demo Lecture,present,2025-09-23 05:57:30.395302+00:00
+student1@test.com,Demo Lecture,present,2025-09-23 06:00:39.804162+00:00
+student2@test.com,Demo Lecture,present,2025-09-23 06:00:39.804162+00:00
+student3@test.com,Demo Lecture,present,2025-09-23 06:00:39.804162+00:00
+student1@test.com,Demo Lecture,present,2025-09-23 06:02:44.152061+00:00
+student2@test.com,Demo Lecture,present,2025-09-23 06:02:44.152061+00:00
+student3@test.com,Demo Lecture,present,2025-09-23 06:02:44.152061+00:00
+student1@test.com,Demo Lecture,present,2025-09-23 06:03:11.914350+00:00
+student2@test.com,Demo Lecture,present,2025-09-23 06:03:11.914350+00:00
+student3@test.com,Demo Lecture,present,2025-09-23 06:03:11.914350+00:00
+student1@test.com,Demo Lecture,present,2025-09-23 06:04:06.694394+00:00
+student2@test.com,Demo Lecture,present,2025-09-23 06:04:06.694394+00:00
+student3@test.com,Demo Lecture,present,2025-09-23 06:04:06.694394+00:00
