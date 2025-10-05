@@ -1,36 +1,35 @@
+# File: attendance/models.py
 from django.db import models
+from django.conf import settings
 from django.utils import timezone
-from accounts.models import User
 
 class Lecture(models.Model):
-    title = models.CharField(max_length=200, default="Lecture")
-    lecturer = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        limit_choices_to={'role': 'lecturer'}
-    )
-    start_time = models.DateTimeField(default=timezone.now)
-    end_time = models.DateTimeField(null=True, blank=True)
+    title = models.CharField(max_length=255)
+    lecturer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     qr_code = models.CharField(max_length=100, blank=True, null=True)
-    qr_expires_at = models.DateTimeField(null=True, blank=True)
+    qr_expires_at = models.DateTimeField(blank=True, null=True)
+    start_time = models.DateTimeField(default=timezone.now)
+    end_time = models.DateTimeField(blank=True, null=True)
 
     def __str__(self):
-        return f"{self.title} by {self.lecturer.email}"
+        return self.title
 
 
 class Attendance(models.Model):
-    STATUS_CHOICES = [('present', 'Present'), ('absent', 'Absent')]
+    STATUS_CHOICES = [
+        ("present", "Present"),
+        ("absent", "Absent"),
+        ("late", "Late"),
+    ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE)
-    lecture = models.ForeignKey(Lecture, on_delete=models.CASCADE)
-    timestamp = models.DateTimeField(default=timezone.now)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='present')
-    latitude = models.FloatField(null=True, blank=True)
-    longitude = models.FloatField(null=True, blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    lecture = models.ForeignKey(Lecture, on_delete=models.CASCADE, related_name="attendances")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="present")
+    timestamp = models.DateTimeField(auto_now_add=True)
     qr_code = models.CharField(max_length=100, blank=True, null=True)
-
-    class Meta:
-        unique_together = ('user', 'lecture')
+    qr_expires_at = models.DateTimeField(blank=True, null=True)
+    latitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
+    longitude = models.DecimalField(max_digits=9, decimal_places=6, blank=True, null=True)
 
     def __str__(self):
         return f"{self.user.email} - {self.lecture.title} - {self.status}"

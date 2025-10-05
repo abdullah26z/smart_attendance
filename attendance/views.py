@@ -1,155 +1,135 @@
-from rest_framework.views import APIView
-from rest_framework.response import Response
+# attendance/views.py
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from django.utils import timezone
 from datetime import timedelta
-from .models import Attendance, Lecture
-from .serializers import AttendanceSerializer
-from utils.qr_utils import generate_qr_code, is_qr_valid
-import random
-import string
-import csv
-import os
-import requests  # لإرسال رسائل لتليجرام
-from django.conf import settings
-
-CSV_FILE = "attendance_log.csv"
+from .models import Lecture, Attendance
+from accounts.models import User
+import random, string
 
 # ---------------------------
-# دالة حفظ السجل في CSV
+# توليد QR Code عشوائي
 # ---------------------------
-def save_attendance_csv(att):
-    file_exists = os.path.isfile(CSV_FILE)
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow([
-                "datetime", "user_id", "user_email", "status",
-                "latitude", "longitude", "qr_code", "qr_expires_at"
-            ])
-        writer.writerow([
-            att.timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            att.user.id,
-            att.user.email,
-            att.status,
-            att.latitude,
-            att.longitude,
-            att.qr_code,
-            att.qr_expires_at.strftime("%Y-%m-%dT%H:%M:%S") if att.qr_expires_at else ""
-        ])
+def generate_qr_code(length=8):
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
 # ---------------------------
-# دالة إرسال رسالة على تليجرام
+# إنشاء محاضرة جديدة (Doctor)
 # ---------------------------
-def send_telegram_message(chat_id, message):
-    token = getattr(settings, "TELEGRAM_TOKEN", None)
-    if not token or not chat_id:
-        return  # ما في توكن أو ما سجلنا chat_id
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": message}
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_lecture(request):
+    user = request.user
+    if user.role not in ['lecturer', 'admin']:
+        return Response({"detail": "Only lecturers can create lectures."}, status=status.HTTP_403_FORBIDDEN)
+
+    title = request.data.get('title')
+    if not title:
+        return Response({"detail": "Title is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    qr_code = generate_qr_code()
+    qr_expires_at = timezone.now() + timedelta(minutes=10)
+
+    lecture = Lecture.objects.create(
+        title=title,
+        lecturer=user,
+        qr_code=qr_code,
+        qr_expires_at=qr_expires_at
+    )
+
+    return Response({
+        "lecture": {
+            "id": lecture.id,
+            "title": lecture.title,
+            "qr_code": lecture.qr_code,
+            "qr_expires_at": lecture.qr_expires_at
+        }
+    }, status=status.HTTP_201_CREATED)
+
+# ---------------------------
+# تسجيل الحضور عن طريق QR (Student)
+# ---------------------------
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_attendance(request):
+    user = request.user
+    qr_code = request.data.get('qr_code')
+
+    if not qr_code:
+        return Response({"detail": "QR code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
     try:
-        requests.post(url, json=payload, timeout=5)
-    except requests.RequestException:
-        pass  # نتجاهل أي خطأ بالشبكة
+        lecture = Lecture.objects.get(qr_code=qr_code)
+    except Lecture.DoesNotExist:
+        return Response({"detail": "Invalid QR code."}, status=status.HTTP_404_NOT_FOUND)
+
+    # تحقق من صلاحية QR
+    if lecture.qr_expires_at < timezone.now():
+        return Response({"detail": "QR code expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+    attendance, created = Attendance.objects.get_or_create(
+        user=user,
+        lecture=lecture,
+        defaults={
+            "status": "present",
+            "qr_code": qr_code,
+            "latitude": request.data.get("latitude"),
+            "longitude": request.data.get("longitude"),
+            "qr_expires_at": lecture.qr_expires_at
+        }
+    )
+
+    if not created:
+        return Response({"detail": "Attendance already marked."}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({
+        "attendance": {
+            "lecture": lecture.title,
+            "status": attendance.status,
+            "timestamp": attendance.timestamp
+        }
+    }, status=status.HTTP_201_CREATED)
 
 # ---------------------------
-# تسجيل الحضور
+# آخر حضور (Student)
 # ---------------------------
-class AttendanceAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def last_attendance(request):
+    user = request.user
+    att = Attendance.objects.filter(user=user).order_by('-timestamp').first()
+    if not att:
+        return Response({"detail": "No attendance found."}, status=status.HTTP_404_NOT_FOUND)
 
-    def post(self, request):
-        serializer = AttendanceSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=400)
-
-        qr_code = serializer.validated_data.get("qr_code")
-        # تحقق من صلاحية QR
-        lecture_qr_valid = Lecture.objects.filter(
-            qr_code=qr_code,
-            qr_expires_at__gte=timezone.now()
-        ).first()
-        if not lecture_qr_valid or not is_qr_valid(qr_code, timezone.now()):
-            return Response({"error": "QR غير صالح أو انتهت صلاحيته"}, status=400)
-
-        qr_expires_at = timezone.now() + timedelta(minutes=10)
-        attendance = serializer.save(
-            user=request.user,
-            lecture=lecture_qr_valid,
-            timestamp=timezone.now(),
-            qr_code=qr_code,
-            qr_expires_at=qr_expires_at
-        )
-
-        save_attendance_csv(attendance)
-
-        # إرسال إشعار عبر تليجرام لو كان مسجل chat_id
-        if hasattr(request.user, "telegram_chat_id") and request.user.telegram_chat_id:
-            send_telegram_message(
-                request.user.telegram_chat_id,
-                f"✅ تم تسجيل حضورك للمحاضرة: {lecture_qr_valid.title} ({attendance.timestamp.strftime('%H:%M:%S')})"
-            )
-
-        qr_image_base64 = generate_qr_code(qr_code)
-        return Response({
-            "message": "تم تسجيل الحضور بنجاح",
-            "attendance": serializer.data,
-            "qr_image_base64": qr_image_base64,
-            "qr_expires_at": qr_expires_at
-        }, status=201)
+    return Response({
+        "lecture": att.lecture.title,
+        "status": att.status,
+        "timestamp": att.timestamp,
+        "qr_code": att.qr_code,
+        "qr_expires_at": att.qr_expires_at
+    })
 
 # ---------------------------
-# استعراض سجل الحضور
+# إحصائيات حضور (Doctor)
 # ---------------------------
-class AttendanceHistoryAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def attendance_stats(request, lecture_id):
+    user = request.user
+    if user.role not in ['lecturer', 'admin']:
+        return Response({"detail": "Only lecturers can view stats."}, status=status.HTTP_403_FORBIDDEN)
 
-    def get(self, request):
-        attendances = Attendance.objects.filter(user=request.user).order_by('-timestamp')
-        if not attendances.exists():
-            return Response({"message": "لا يوجد حضور مسجل حتى الآن."})
-        serializer = AttendanceSerializer(attendances, many=True)
-        return Response(serializer.data)
+    try:
+        lecture = Lecture.objects.get(id=lecture_id, lecturer=user)
+    except Lecture.DoesNotExist:
+        return Response({"detail": "Lecture not found."}, status=status.HTTP_404_NOT_FOUND)
 
-# ---------------------------
-# إحصائيات الحضور
-# ---------------------------
-class AttendanceStatsAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        user = request.user
-        total = Attendance.objects.filter(user=user).count()
-        today = Attendance.objects.filter(user=user, timestamp__date=timezone.now().date()).count()
-        last_week = Attendance.objects.filter(user=user, timestamp__gte=timezone.now() - timedelta(days=7)).count()
-        return Response({
-            "total_attendance": total,
-            "today_attendance": today,
-            "last_7_days": last_week
-        })
-
-# ---------------------------
-# توليد QR للمحاضرة
-# ---------------------------
-class LectureQRAPIView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        qr_content = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        qr_expires_at = timezone.now() + timedelta(minutes=10)
-        qr_image_base64 = generate_qr_code(qr_content)
-
-        lecture = Lecture.objects.create(
-            title="Lecture",
-            lecturer=request.user,
-            qr_code=qr_content,
-            qr_expires_at=qr_expires_at
-        )
-
-        return Response({
-            "message": "تم توليد QR للمحاضرة",
-            "qr_code": qr_content,
-            "qr_image_base64": qr_image_base64,
-            "qr_expires_at": qr_expires_at,
-            "lecture_id": lecture.id
-        }, status=201)
+    total = Attendance.objects.filter(lecture=lecture).count()
+    present = Attendance.objects.filter(lecture=lecture, status='present').count()
+    return Response({
+        "lecture": lecture.title,
+        "total_attendance": total,
+        "present": present
+    })

@@ -1,9 +1,9 @@
+# File: attendance_bot.py
 import os, csv
-from datetime import datetime
+from datetime import datetime, timedelta
 from telegram import Update, InputFile
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from dotenv import load_dotenv
-import base64
 from io import BytesIO
 from PIL import Image
 import qrcode
@@ -54,16 +54,11 @@ async def last_attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"انتهاء صلاحية QR: {att['qr_expires_at']}"
         )
         await update.message.reply_text(message)
-
-        # إرسال صورة QR مباشرة
         qr_img = qr_code_to_image(att["qr_code"])
         await update.message.reply_photo(photo=InputFile(qr_img, filename="qr.png"))
     else:
         await update.message.reply_text("لا يوجد حضور مسجل حتى الآن.")
 
-# ---------------------------
-# باقي الأوامر كما هي
-# ---------------------------
 async def attendance_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         with open(ATTENDANCE_FILE, newline="", encoding="utf-8") as f:

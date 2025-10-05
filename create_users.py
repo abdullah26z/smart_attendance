@@ -1,5 +1,4 @@
 # File: create_users.py
-
 import os
 import django
 
